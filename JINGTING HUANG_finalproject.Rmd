@@ -1,0 +1,108 @@
+---
+title: "final_project"
+author: "JINGTING HUANG"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Part 1: Data Visualization
+```{r,message = FALSE, warnings = FALSE}
+df1=read.csv("healthcare-dataset-stroke-data.csv")
+df1[df1 == "N/A"]  <- NA
+df1=na.omit(df1)
+
+library(ggplot2)
+
+#making plots for the data visualization
+ggplot(df1)+geom_histogram(aes(x=as.numeric(bmi)), binwidth=5, color="black")+labs(x="bmi", title="Distribution of BMI")
+
+ggplot(df1)+geom_smooth(aes(x=as.numeric(bmi), y=age))+labs(x="bmi", title="Relationship between bmi and age")
+
+ggplot(df1)+geom_bar(aes(fill=work_type,x=Residence_type))+facet_wrap(~gender)
+
+```
+
+## Part 2: Data Transformation
+```{r,message = FALSE, warnings = FALSE}
+library(dplyr)
+library(knitr)
+
+df1[df1 == "N/A"]  <- NA
+df1=na.omit(df1)
+
+df1 %>% group_by(smoking_status)%>% summarise(prop.stroke=mean(as.numeric(stroke)))
+
+df1 %>% group_by(smoking_status)%>%mutate(gender1=ifelse(gender=="Male",1,0)) %>% summarise(prop.male=mean(gender1))
+
+df1 %>% group_by(smoking_status)%>%summarise(mean.bmi=mean(as.numeric(bmi)))
+
+df1 %>% group_by(smoking_status)%>%summarise(median.glucose=median(as.numeric(avg_glucose_level)))
+
+
+
+
+df1 %>% group_by(Residence_type)%>%summarise(prop.stroke=mean(as.numeric(stroke)))
+
+
+```
+
+
+## Part 3: Modeling 
+```{r,message = FALSE, warnings = FALSE}
+library(tidyverse)
+library(modelr)
+library(pROC)
+
+df1[df1 == "N/A"]  <- NA
+df1=na.omit(df1)
+
+#data transformation
+df.mod=df1 %>% mutate(sq.id=(as.numeric(id)^2),sq.age=(as.numeric(age)^2), sq.hypertension=(as.numeric(hypertension)^2), sq.heart_disease=(as.numeric(heart_disease)^2), sq.avg_glucose_level=(as.numeric(avg_glucose_level)^2), sq.bmi=(as.numeric(bmi)^2), sq.stroke=(as.numeric(stroke)^2))
+
+df.mod <- df.mod[, -c(1, 3:5,9:10, 12 )]
+
+library(MASS)
+
+#testing and training 
+set.seed(1)
+df2=resample_partition(df.mod, c(train=0.6, valid=0.2, test=0.2))
+df2train=as.tibble(df2$train)
+df2test=as.tibble(df2$test)
+
+#running stepwise
+base.mod=glm(sq.stroke~-1, data=df2train, family='binomial')
+
+full.mod=glm(sq.stroke~.-1-sq.stroke, data=df2train, family='binomial')
+
+step.mod <- stepAIC(full.mod, direction='both', trace=FALSE)
+
+sum_logit=summary(step.mod)
+sum_logit
+
+colnames(sum_logit$coefficients) <- c("est","std","T","Pr")
+b=row.names(as.data.frame(sum_logit$coefficients)%>%filter(Pr<=0.05))
+
+c=paste(b, collapse='+')
+
+
+#fitting the models
+train1 <- model_matrix(df2train, sq.stroke ~ .-1)
+test1 <- model_matrix(df2test, sq.stroke ~ .-1)
+
+train1$sq.stroke <- df2train$sq.stroke
+test1$sq.stroke <- df2test$sq.stroke
+
+fit_train<- glm(data=train1,as.formula(paste("sq.stroke ~ ",c,sep = "")),family = "binomial")
+
+
+#performance for train
+auc(df2train$sq.stroke, fit_train$fitted.values)
+
+#performance for test
+df.final <- test1%>%
+  add_predictions(fit_train, "lpred_best")%>%
+  mutate(prob_best=exp(lpred_best)/(1+exp(lpred_best)))
+
+auc(df.final$sq.stroke,df.final$prob_best)
+```
